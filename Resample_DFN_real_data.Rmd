@@ -1,0 +1,96 @@
+---
+title: "Comparison between three methods (original, DFN, DFN+resample)"
+author: "Kang Xue"
+date: "3/2/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(mirt)
+
+# load response data
+
+save_path <- file.path("~", "Dropbox", "Research", "Research_Assistance",
+                       "UF_Algebra_Nation_2018", "Code", "DFN", "Real_Data")
+
+data_path <- file.path("~", "Dropbox", "Research", "Research_Assistance",
+                       "UF_Algebra_Nation_2018", "Code", "DFN", "Real_Data_output")
+
+
+
+domains = c("571", "572", "573", "574", "577", "578", "579", "580", "581", "582")
+
+#all item parameter true value and estimates
+#irt_param_compare <- data.table::fread(file = file.path(save_path, "est_simulate_item1.csv")) %>%
+#  as.tibble() %>%
+#  select('Dffclt', 'Dscrmn', 'item_id')%>%
+#  separate(col = 'item_id', into = c('domain', 'unique_id'), sep = '_')
+
+biased_avg_ability <- read.csv(file.path(data_path, 'avg_ability_diff.csv'))
+  
+```
+
+```{r, echo=FALSE, eval=FALSE }
+for(domain_1 in domains){
+  #load simulated response data
+  response <- read.csv(file = file.path(save_path, paste("tys_1718", domain_1, "anchor_student_response.csv", sep = "_"))) %>%
+    select(-useraccount_id)
+  
+  theta_est <- read.csv(file = file.path(save_path, paste("tys_1718", domain_1, "ability_mirt.csv", sep = "_")))
+  
+  avg_theta <- biased_avg_ability %>%
+    filter(domain == domain_1) %>%
+    dplyr::select(Avg_diff)
+  
+  diff_theta <- avg_theta - mean(theta_est$ability)
+  
+  #get the refined theta
+  theta_est_refined <- theta_est$ability + unlist(diff_theta)
+  
+  
+  prob <- pnorm(theta_est_refined, mean = 0, sd = 1)/pnorm(theta_est_refined, mean = mean(theta_est_refined), sd = sd(theta_est_refined))
+  
+  B <- 50
+  #true_diff <- filter(irt_param_compare, domain == domain_1)
+  #true_diff <- true_diff[2:nrow(true_diff), ]
+  
+  est_fit2 <- {}
+  for(b in 1:B){
+    # bootstrap
+    cat(domain_1, b, '...' ,'\n')
+    sample_new_index <- sample(x = seq_along(theta_est_refined), 
+                             size = length(theta_est_refined), 
+                             prob = prob, replace = TRUE)
+  
+    response_sample <- response[sample_new_index, ]
+  
+    fit2 <- mirt(response_sample, model = 1, itemtype = "2PL", SE = TRUE,
+                 verbose = FALSE)
+  
+    irt_params_fit2 <- coef(fit2)[-length(coef(fit2))] %>%
+      bind_rows()
+    irt_params_fit2 <- irt_params_fit2[1:6,] %>%
+      t() %>%
+      as.data.frame() %>%
+      mutate(item = colnames(irt_params_fit2))
+    names(irt_params_fit2) <- c("a", "a_lower", "a_upper", "d", "d_lower", "d_upper", 'item_id')
+    
+    est_fit2 <- est_fit2 %>%
+      rbind(dplyr::select(irt_params_fit2, a, d, item_id))
+  }
+  
+  items_num <- unique(est_fit2$item_id)
+  
+  sum_est_fit2 <- est_fit2 %>%
+    group_by(item_id) %>%
+    summarise(avg_a = mean(a), 
+              lower_a = avg_a - 1.96*sd(a), upper_a = avg_a + 1.96*sd(a),
+              avg_d = mean(d),
+              lower_d = avg_d - 1.96*sd(d), upper_d = avg_d + 1.96*sd(d)) %>%
+    mutate_at("item_id", factor, levels = items_num) %>%
+    arrange(item_id)
+  
+  write_csv(x = sum_est_fit2, path = file.path(save_path, paste(domain_1, 'refined_item_param.csv', sep = "_")))
+}
+```
